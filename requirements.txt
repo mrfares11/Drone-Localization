@@ -1,0 +1,9 @@
+torch
+torchvision
+opencv-python
+pillow
+faiss-cpu
+matplotlib
+numpy
+psutil
+# tkinter is included with Python by default
