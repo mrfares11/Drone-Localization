@@ -190,34 +190,6 @@ localizer.adjust_movement_freedom(
 )
 ```
 
-## 🤝 Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
 
-## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 🙏 Acknowledgments
-
-- PyTorch team for MobileNet-V3
-- Facebook AI Research for FAISS
-- OpenCV community
-- Contributors and testers
-
-## 📞 Support
-
-For issues, questions, or contributions:
-- Create an issue on GitHub
-- Check the troubleshooting section
-- Review the setup guide
-
----
-
-**Version**: 1.0.0  
-**Last Updated**: July 27, 2025  
-**Tested Configurations**: Python 3.10, Windows 11, CPU/GPU
