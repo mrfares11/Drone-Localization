@@ -1,114 +1,142 @@
-````markdown
-# Optimized Drone Localizer
+# Drone Localizer
 
-High-performance drone localization system with comprehensive CPU optimizations and **real-time map visualization**.
+Vision-based drone localization from video or a live camera feed: match drone
+footage against a satellite/aerial map to recover the drone's trajectory,
+without GPS.
+
+The map is tiled into overlapping, rotated windows across every scale from
+3x3 to 15x15 cells. Each window and each video/camera frame are embedded with
+a pretrained MobileNet-V3, and the frame's position is estimated via
+nearest-neighbor search (FAISS) over the map embeddings, with temporal
+smoothing across frames so the trajectory doesn't jump erratically.
+
+## How it works
+
+1. **Tile the map** into a grid of cells, group cells into overlapping
+   windows at every size from 3x3 to 15x15, and generate 8 rotated copies of
+   each window (0° to 315° in 45° steps).
+2. **Embed every window** with a pretrained MobileNet-V3 and index the
+   embeddings with FAISS for fast similarity search. Processed windows are
+   cached to disk (`drone_map_windows/`, keyed by a hash of the map + config)
+   so re-running against the same map skips reprocessing.
+3. **Embed each frame** — from a video file or a live camera — the same way,
+   and query the index for the best-matching map window (position +
+   rotation).
+4. **Refine and smooth**: a local search narrows the match to a precise pixel
+   location, and a temporal weighting term biases each estimate toward the
+   previous frame's position.
 
 ## Features
 
-- **Maximum CPU Performance**: Optimized for CPU-only systems
-- **Timing Breakdown**: Ttotal = Tembeddings + Tmatching + Tdisplayingresults
-- **Smart Caching**: Embedding and similarity caching for speed
-- **Batch Processing**: CPU-optimized batch sizes
-- **Memory Efficient**: Minimized memory footprint
-- **🆕 Live Map Visualization**: Real-time drone position tracking on map with trajectory trails
-- **🆕 Picture-in-Picture**: Camera feed shown alongside map visualization
-- **🆕 Confidence Color Coding**: Visual feedback on localization quality
-- **🆕 Frame Saving**: Automatically save each frame with its position on the map
-- **🆕 Combined Views**: Side-by-side camera frame and position visualization
+- **Full video or live camera analysis** — process a recorded flight, or a
+  live feed (including Jetson CSI cameras via GStreamer, auto-detected).
+- **Live map visualization** — a real-time window showing the tracked
+  position on the map, trailing path color-coded by confidence, heading
+  arrow, and a picture-in-picture camera view.
+- **Frame saving** — optionally save every processed frame plus its map
+  position and a combined side-by-side view to `frame_outputs/<run>/`.
+- **GPU-aware** — uses CUDA + `torch.compile` + FP16 automatically when
+  available (Volta or newer), and falls back cleanly to CPU otherwise.
+- **Preprocessed window cache management** — inspect, reuse, or delete
+  cached map windows from the in-app menu.
 
-## Quick Start
+## Installation
 
-1. Activate virtual environment:
-   ```bash
-   source .venv/bin/activate
-   ```
+```bash
+git clone https://github.com/mrfares11/Drone-Localization.git
+cd Drone-Localization
+pip install -r requirements.txt
+```
 
-2. Run the localizer:
-   ```bash
-   python local_video_trajectory_drone_localizer.py
-   ```
+Requires Python 3.7+. `tkinter` ships with most Python installs; on Linux you
+may need `sudo apt install python3-tk`.
 
-3. **NEW: Try the Live Visualization Demo**:
-   ```bash
-   python demo_live_visualization.py
-   ```
+### NVIDIA Jetson / ARM boards
 
-## Live Map Visualization
+PyTorch's OpenMP runtime can hit a libgomp TLS allocation issue on Jetson.
+Run through the included wrapper instead of calling Python directly:
 
-Watch your drone's position update in real-time on the map as each frame is processed!
+```bash
+./run_with_fix.sh local_video_trajectory_drone_localizer.py
+```
 
-### Features
-- **Real-time Position Updates**: See drone location update live
-- **Trajectory Trail**: Color-coded path showing confidence levels (green=high, red=low)
-- **Direction Arrows**: Visual indication of drone heading/rotation
-- **Live Statistics**: FPS, distance traveled, confidence metrics
-- **Picture-in-Picture**: Camera view shown in corner of map
-- **Interactive Controls**: Save, reset, or quit during analysis
+## Usage
 
-### Quick Example
+```bash
+python local_video_trajectory_drone_localizer.py
+```
+
+This loads MobileNet-V3, prompts you to select a map image, builds (or loads
+a cached copy of) the window index, then offers:
+
+1. **Full Video Trajectory Analysis** — process a video file end to end,
+   plot the trajectory, and export it to `drone_trajectory.csv`.
+2. **Live Camera Feed Analysis** — analyze a live camera stream (port 0,
+   10 FPS by default). Press `q` to stop, `s` to save, `r` to reset the
+   trajectory mid-run.
+3. **Exit**
+
+Live map visualization and frame saving are both enabled by default; toggle
+them on the `LocalVideoTrajectoryDroneLocalizer` instance before running:
+
 ```python
 localizer = LocalVideoTrajectoryDroneLocalizer()
+localizer.enable_live_map_visualization = True   # real-time map + trail window
+localizer.save_frames_with_positions = True       # write frame_outputs/<run>/...
+localizer.frame_save_interval = 1                 # save every Nth frame
+
 localizer.load_map_from_file("map.png")
 localizer.process_map()
-
-# Enable live visualization
-localizer.enable_live_map_visualization = True
-
-# Analyze video - watch drone move on map in real-time!
 localizer.analyze_video_from_file("drone_video.mp4")
 ```
 
-See **[LIVE_VISUALIZATION_GUIDE.md](LIVE_VISUALIZATION_GUIDE.md)** for detailed documentation.
+## Configuration
 
-## Frame Saving with Position Tracking
-
-Save each processed frame along with its predicted position on the map!
-
-### What Gets Saved
-- **Original frames** from camera/video
-- **Position maps** showing where drone is on the map
-- **Combined views** with frame and position side-by-side
-- **Summary report** with statistics and metrics
-
-### Quick Example
 ```python
-localizer = LocalVideoTrajectoryDroneLocalizer()
-localizer.load_map_from_file()
-localizer.process_map()
-
-# Enable frame saving
-localizer.save_frames_with_positions = True
-localizer.frame_save_interval = 1  # Save every frame
-
-# Analyze - frames saved to timestamped folder
-localizer.analyze_video_from_file("video.mp4")
-# Output: frame_outputs/video_YYYYMMDD_HHMMSS/
+localizer.adjust_movement_freedom(
+    search_radius=400,       # px, local search area around the previous position
+    max_search_radius=600,   # px, adaptive expansion cap
+    temporal_weight=0.3,     # 0-1, how much the previous frame's position pulls the estimate
+)
 ```
 
-See **[FRAME_SAVING_GUIDE.md](FRAME_SAVING_GUIDE.md)** for complete documentation.
+Window sizes (3x3 through 15x15) and rotation angles are fixed at
+construction time via `LocalVideoTrajectoryDroneLocalizer(base_cell_size=32,
+rotation_angles=[...])` if you need a narrower sweep for faster indexing.
 
-## Performance Optimizations
+## Input requirements
 
-- **CPU Thread Management**: Optimized for 4-core systems
-- **Fast Clustering**: Reduced K-means parameters for speed
-- **Efficient Search**: Optimized FAISS indexing and similarity search
-- **Embedding Caching**: 2000-item cache for repeated computations
+- **Map image**: PNG/JPG/JPEG/BMP/TIFF satellite or aerial view of the flight
+  area. Higher resolution improves matching accuracy.
+- **Video/camera feed**: MP4/AVI/MOV/MKV/WMV/FLV, or a live camera at the
+  configured port, covering the mapped area.
 
-## Files
+## Output
 
-- `local_video_trajectory_drone_localizer.py`: Main optimized localizer
-- `demo_live_visualization.py`: 🆕 Interactive demo of live visualization
-- `requirements.txt`: All required dependencies
-- `drone_trajectory.csv`: Sample trajectory data
-- `drone_map_windows/`: Cached preprocessing data
-- `LIVE_VISUALIZATION_GUIDE.md`: 🆕 Complete guide to live visualization feature
-- `run_with_fix.sh`: Wrapper script for Jetson/ARM systems (fixes libgomp issues)
+`export_trajectory()` writes a CSV with one row per processed frame:
 
-## Additional Documentation
+```csv
+frame,timestamp,x,y,rotation,confidence,window_size
+0,0.00,2036.3,764.0,112.6,0.756,12
+3,0.10,1912.2,786.4,112.4,0.753,12
+```
 
-- `LIVE_VISUALIZATION_GUIDE.md`: 🆕 Complete guide to live visualization feature
-- `CAMERA_LIVE_FEED_GUIDE.md`: Camera setup and live feed analysis
-- `JETSON_CAMERA_FIX.md`: Fixes for Jetson/ARM systems
-- `FRAME_SAVING_GUIDE.md`: 🆕 Guide to automatic frame and position saving
+`x`/`y` are pixel coordinates on the supplied map image, not GPS coordinates
+— convert using your map's known scale/georeference if you need real-world
+units. When frame saving is enabled, each run additionally writes to
+`frame_outputs/<name>_<timestamp>/frames/`, `positions/`, and `combined/`,
+plus a `run_info.txt` summary.
 
-````
+## Notes
+
+- MobileNet-V3 weights are downloaded automatically on first run (requires
+  internet access once).
+- Indexing all 13 window sizes x 8 rotations is comprehensive but slow;
+  narrow `rotation_angles` or the window-size range in the constructor if you
+  need faster iteration.
+- `drone_map_windows/`, `frame_outputs/`, exported CSVs, and rendered videos
+  are all gitignored — they're per-run artifacts, not repo content.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
